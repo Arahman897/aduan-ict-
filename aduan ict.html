@@ -39,6 +39,7 @@ textarea{min-height:70px}
 #lap table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}#lap th,#lap td{border:1px solid #bbb;padding:4px 6px;text-align:left;vertical-align:top}#lap th{background:#eee}
 #lap .sg{display:flex;justify-content:space-between;margin-top:40px;font-size:13px}#lap .sg div{width:44%;border-top:1px solid #111;padding-top:4px}
 .tw{overflow-x:auto}
+.warn{border:1px solid var(--wn);color:var(--wn);border-radius:10px;padding:8px 12px;margin:10px 0;font-size:13px}
 </style>
 </head>
 <body>
@@ -46,130 +47,170 @@ textarea{min-height:70px}
 <main id="app"></main>
 <nav id="nav"></nav>
 <script>
+"use strict";
 const KAT=["Laptop","Internet","LCD Projector / TV","Speaker / Audio","Lain-lain PdP"];
+const JENIS=["Pensyarah","Pelajar","Staf"],SAL=["Terus","Telefon","Lain-lain"];
 const ST={baru:"Aduan Diterima",periksa:"Pemeriksaan",susulan:"Tindakan Susulan",sahkan:"Menunggu Pengesahan",tutup:"Ditutup"};
 const ORD=["baru","periksa","susulan","sahkan","tutup"];
-/* ====== TETAPAN CLOUD ======
-   Tampal URL Web App Google Apps Script di antara tanda petik.
-   Jika dibiarkan kosong, data disimpan dalam peranti (mod setempat). */
-const API_URL="https://script.google.com/macros/s/AKfycbw0SK03e-rNMznPCMkggiF92PO34E7H6imnBoxqaN2nidV1G2HIUYdaeF8FFQyn1r3tug/exec";
-const CLOUD=!!API_URL;
-let D=[],view="list",cur=null,q="",fs="";
-if(!CLOUD){try{D=JSON.parse(localStorage.getItem("aduan")||"[]")}catch(e){D=[]}}
-const lsSave=()=>{try{localStorage.setItem("aduan",JSON.stringify(D))}catch(e){}};
-async function api(body){const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(body)});const j=await r.json();if(!j.ok)throw new Error(j.error||"Ralat");return j}
-async function cloudLoad(){try{const r=await fetch(API_URL+"?action=list");const j=await r.json();if(j.ok){D=j.rows;setSt("☁️ Disegerak "+new Date().toLocaleTimeString("ms-MY",{timeStyle:"short"}))}}catch(e){setSt("⚠️ Tiada sambungan cloud")}}
-function setSt(t){const e=document.getElementById("st");if(e)e.textContent=t}
-const save=a=>{if(!CLOUD){lsSave();return}if(a)api({action:"upsert",rec:a}).then(()=>setSt("☁️ Disimpan")).catch(()=>{alert("Gagal simpan ke cloud. Semak sambungan internet.");cloudLoad().then(render)})};
-const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const now=()=>new Date().toISOString();
-const fmt=t=>new Date(t).toLocaleString("ms-MY",{dateStyle:"medium",timeStyle:"short"});
+let D=[],view="list",cur=null,q="",fs="",fd="",ft="",LIM=100,busy=false,idb=null,mode="idb";
 const $=id=>document.getElementById(id);
-function go(v,id){view=v;cur=id||null;render();scrollTo(0,0)}
-function nav(){$("nav").innerHTML=[["list","📋","Senarai"],["new","➕","Aduan Baru"],["stat","📊","Statistik"],["rep","📄","Laporan"]].map(([v,i,t])=>`<button class="${view==v||(v=='list'&&view=='det')?'on':''}" onclick="go('${v}')"><span>${i}</span>${t}</button>`).join("")}
-function tagc(s){return s=="tutup"?"ok":s=="susulan"?"wn":""}
-function render(){nav();$("app").innerHTML=view=="new"?vNew():view=="det"?vDet():view=="stat"?vStat():view=="rep"?vRep():vList()}
-function vList(){
- let L=D.filter(a=>(!fs||a.s==fs)&&(!q||JSON.stringify(a).toLowerCase().includes(q.toLowerCase()))).sort((a,b)=>b.t.localeCompare(a.t));
- return `<div class="card"><input id="sq" placeholder="Cari nama / lokasi / ID…" value="${esc(q)}" oninput="q=this.value;render();$('sq').focus()">
- <select onchange="fs=this.value;render()" style="margin-top:8px"><option value="">Semua status</option>${ORD.map(s=>`<option value="${s}" ${fs==s?'selected':''}>${ST[s]}</option>`).join("")}</select></div>`+
- (L.length?L.map(a=>`<div class="card" onclick="go('det','${a.id}')"><div class="row"><b>${a.id}</b><span class="tag ${tagc(a.s)}">${ST[a.s]}</span></div>
- <div>${esc(a.kat)} — ${esc(a.masalah).slice(0,80)}</div><div class="mu">${esc(a.nama)} (${a.jenis}) • ${esc(a.lokasi)} • ${fmt(a.t)}</div></div>`).join(""):`<p class="mu" style="text-align:center;margin-top:40px">Tiada aduan. Tekan “Aduan Baru”.</p>`)}
-function vNew(){return `<div class="card"><b>1. Terima & Rekod Aduan</b>
- <label>Jenis pengadu</label><select id="jenis"><option>Pensyarah</option><option>Pelajar</option><option>Staf</option></select>
- <label>Nama</label><input id="nama">
- <label>Lokasi (bilik / dewan)</label><input id="lokasi">
- <label>Saluran aduan</label><select id="saluran"><option>Terus</option><option>Telefon</option><option>Lain-lain</option></select>
- <label>Kategori masalah</label><select id="kat">${KAT.map(k=>`<option>${k}</option>`).join("")}</select>
- <label>Peralatan (model / no. aset)</label><input id="alat">
- <label>Masalah</label><textarea id="masalah"></textarea>
- <button class="btn" onclick="addA()">Simpan Aduan</button></div>`}
-async function addA(){
- const g=i=>$(i).value.trim();
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const now=()=>new Date().toISOString(),pad=n=>String(n).padStart(2,"0");
+const ym=(d=new Date())=>d.getFullYear()+"-"+pad(d.getMonth()+1),ymOf=t=>ym(new Date(t));
+const ymd=t=>{const d=new Date(t);return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())};
+const fmt=t=>{const d=new Date(t);return isNaN(d)?"-":d.toLocaleString("ms-MY",{dateStyle:"medium",timeStyle:"short"})};
+const lsGet=k=>{try{return localStorage.getItem(k)}catch(e){return null}},lsSet=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+const lsRead=()=>{try{const a=JSON.parse(lsGet("aduan")||"[]");return Array.isArray(a)?a:[]}catch(e){return[]}};
+function setSt(t,bad){const e=$("st");if(e){e.textContent=t;e.style.color=bad?"#ffb4a8":""}}
+
+/* ---------- storan: IndexedDB (pantas, per-rekod) dengan sandaran localStorage ---------- */
+function openDB(){return new Promise((res,rej)=>{if(!window.indexedDB)return rej(new Error("tiada IndexedDB"));
+ const r=indexedDB.open("aduan-ict",1);r.onupgradeneeded=()=>r.result.createObjectStore("aduan",{keyPath:"id"});
+ r.onsuccess=()=>{r.result.onversionchange=()=>r.result.close();res(r.result)};r.onerror=()=>rej(r.error);r.onblocked=()=>rej(new Error("disekat"))})}
+const tx=(m,fn)=>new Promise((res,rej)=>{const t=idb.transaction("aduan",m);let o;try{o=fn(t.objectStore("aduan"))}catch(e){return rej(e)}
+ t.oncomplete=()=>res(o&&o.result!==undefined?o.result:undefined);t.onerror=()=>rej(t.error);t.onabort=()=>rej(t.error||new Error("dibatalkan"))});
+const dbAll=async()=>mode=="idb"?tx("readonly",s=>s.getAll()):lsRead();
+async function dbPut(recs){if(mode=="idb")return tx("readwrite",s=>{recs.forEach(r=>s.put(r))});
+ const m=new Map(D.map(r=>[r.id,r]));recs.forEach(r=>m.set(r.id,r));localStorage.setItem("aduan",JSON.stringify([...m.values()]))}
+async function dbDel(id){if(mode=="idb")return tx("readwrite",s=>{s.delete(id)});localStorage.setItem("aduan",JSON.stringify(D.filter(r=>r.id!=id)))}
+async function persist(fn){try{await fn();setSt("✓ Disimpan "+new Date().toLocaleTimeString("ms-MY",{timeStyle:"short"}));return true}
+ catch(e){setSt("⚠ Gagal simpan",true);alert("Gagal menyimpan pada peranti"+(e&&e.name=="QuotaExceededError"?": ruang penuh":"")+". Tekan Laporan > Sandar (JSON) sekarang.");return false}}
+
+/* ---------- pengesahan data ---------- */
+function norm(a){if(!a||typeof a!="object")return null;const id=String(a.id||"");if(!/^ADU-\d{4}-\d{3,}$/.test(id))return null;
+ const S=(v,n)=>String(v==null?"":v).slice(0,n||500),ok=t=>t&&!isNaN(new Date(t)),t=ok(a.t)?String(a.t):now();
+ const r={id,t,s:ORD.includes(a.s)?a.s:"baru",jenis:S(a.jenis,30),nama:S(a.nama,120),lokasi:S(a.lokasi,120),saluran:S(a.saluran,30),kat:S(a.kat,60),alat:S(a.alat,120),masalah:S(a.masalah,1000),
+  log:(Array.isArray(a.log)?a.log:[]).filter(l=>l&&typeof l.x=="string").map(l=>({t:ok(l.t)?String(l.t):t,x:l.x.slice(0,2000)}))};
+ if(ok(a.tutup))r.tutup=String(a.tutup);return r}
+function nextId(){const d=new Date(),p="ADU-"+String(d.getFullYear()).slice(2)+pad(d.getMonth()+1)+"-";let m=0;
+ D.forEach(a=>{if(a.id.startsWith(p)){const n=parseInt(a.id.slice(p.length),10);if(n>m)m=n}});return p+String(m+1).padStart(3,"0")}
+const get=id=>D.find(a=>a.id==id),tagc=s=>s=="tutup"?"ok":s=="susulan"?"wn":"";
+const H=new WeakMap(),hay=a=>{let h=H.get(a);if(!h){h=[a.id,a.nama,a.lokasi,a.kat,a.masalah,a.alat].join(" ").toLowerCase();H.set(a,h)}return h};
+
+/* ---------- navigasi (butang Back Android berfungsi) ---------- */
+function go(v,id,noPush){view=v;cur=id||null;render();scrollTo(0,0);if(!noPush)try{history.pushState({v,id:cur},"")}catch(e){}}
+addEventListener("popstate",e=>{const s=e.state||{};view=s.v||"list";cur=s.id||null;render()});
+try{history.replaceState({v:"list"},"")}catch(e){}
+function nav(){$("nav").innerHTML=[["list","📋","Senarai"],["new","➕","Aduan Baru"],["stat","📊","Statistik"],["rep","📄","Laporan"]].map(([v,i,t])=>`<button class="${view==v||(v=="list"&&view=="det")?"on":""}" onclick="go('${v}')"><span>${i}</span>${t}</button>`).join("")}
+function render(){nav();$("app").innerHTML=view=="new"?vNew():view=="det"?vDet():view=="stat"?vStat():view=="rep"?vRep():vList();if(view=="list")paintList()}
+
+/* ---------- senarai ---------- */
+function warn(){if(!D.length)return"";const b=lsGet("aduan_lastbackup");return(!b||Date.now()-new Date(b)>30*864e5)?`<div class="warn">Belum ada sandaran dalam 30 hari. Buka Laporan dan tekan “Sandar (JSON)”.</div>`:""}
+function vList(){return `${warn()}<div class="card"><input id="sq" aria-label="Cari" placeholder="Cari nama / lokasi / ID…" value="${esc(q)}" oninput="onQ(this.value)">
+<select aria-label="Tapis status" onchange="fs=this.value;LIM=100;paintList()" style="margin-top:8px"><option value="">Semua status</option>${ORD.map(s=>`<option value="${s}" ${fs==s?"selected":""}>${ST[s]}</option>`).join("")}</select>
+<div class="grid" style="margin-top:8px"><div><label for="fd" style="margin-top:0">Dari tarikh</label><input id="fd" type="date" value="${esc(fd)}" onchange="fd=this.value;LIM=100;paintList()"></div>
+<div><label for="ft" style="margin-top:0">Hingga tarikh</label><input id="ft" type="date" value="${esc(ft)}" onchange="ft=this.value;LIM=100;paintList()"></div></div>
+<div><button class="btn sec" onclick="rng('hari')">Hari ini</button><button class="btn sec" onclick="rng('minggu')">7 hari</button><button class="btn sec" onclick="rng('bulan')">Bulan ini</button><button class="btn sec" onclick="rng('')">Kosongkan tarikh</button></div></div><div id="lst"></div>`}
+function rng(k){const n=new Date();ft=ymd(n);
+ if(k=="hari")fd=ft;else if(k=="minggu"){const d=new Date(n);d.setDate(d.getDate()-6);fd=ymd(d)}
+ else if(k=="bulan")fd=ym(n)+"-01";else{fd="";ft=""}LIM=100;render()}
+let qt;function onQ(v){q=v;LIM=100;clearTimeout(qt);qt=setTimeout(paintList,120)}
+const card=a=>`<div class="card" role="button" tabindex="0" onclick="go('det','${esc(a.id)}')" onkeydown="if(event.key=='Enter')go('det','${esc(a.id)}')"><div class="row"><b>${esc(a.id)}</b><span class="tag ${tagc(a.s)}">${ST[a.s]}</span></div><div>${esc(a.kat)} — ${esc(a.masalah.slice(0,80))}</div><div class="mu">${esc(a.nama)} (${esc(a.jenis)}) • ${esc(a.lokasi)} • ${fmt(a.t)}</div></div>`;
+function paintList(){const el=$("lst");if(!el)return;const ql=q.trim().toLowerCase();
+ let lo=fd,hi=ft;if(lo&&hi&&lo>hi)[lo,hi]=[hi,lo];
+ const L=D.filter(a=>(!fs||a.s==fs)&&(!ql||hay(a).includes(ql))&&(!lo||ymd(a.t)>=lo)&&(!hi||ymd(a.t)<=hi)).sort((a,b)=>a.t<b.t?1:a.t>b.t?-1:0);
+ el.innerHTML=(D.length?`<p class="mu">${L.length} aduan ditemui</p>`:"")+(L.length?L.slice(0,LIM).map(card).join("")+(L.length>LIM?`<button class="btn sec" onclick="LIM+=100;paintList()">Papar lagi (${L.length-LIM})</button>`:""):`<p class="mu" style="text-align:center;margin-top:40px">${D.length?"Tiada padanan.":"Tiada aduan. Tekan “Aduan Baru”."}</p>`)}
+
+/* ---------- aduan baru ---------- */
+const opt=A=>A.map(o=>`<option>${o}</option>`).join("");
+function vNew(){return `<div class="card"><b>1. Terima &amp; Rekod Aduan</b>
+<label for="jenis">Jenis pengadu</label><select id="jenis">${opt(JENIS)}</select>
+<label for="nama">Nama</label><input id="nama" maxlength="120" autocomplete="off">
+<label for="lokasi">Lokasi (bilik / dewan)</label><input id="lokasi" maxlength="120" autocomplete="off">
+<label for="saluran">Saluran aduan</label><select id="saluran">${opt(SAL)}</select>
+<label for="kat">Kategori masalah</label><select id="kat">${opt(KAT)}</select>
+<label for="alat">Peralatan (model / no. aset)</label><input id="alat" maxlength="120" autocomplete="off">
+<label for="masalah">Masalah</label><textarea id="masalah" maxlength="1000"></textarea>
+<button class="btn" id="sv" onclick="addA()">Simpan Aduan</button></div>`}
+async function addA(){if(busy)return;const g=i=>$(i).value.trim();
  if(!g("nama")||!g("lokasi")||!g("masalah")){alert("Sila isi nama, lokasi dan masalah.");return}
- const rec={t:now(),jenis:g("jenis"),nama:g("nama"),lokasi:g("lokasi"),saluran:g("saluran"),kat:g("kat"),alat:g("alat"),masalah:g("masalah"),s:"baru",log:[{t:now(),x:"Aduan diterima & direkod ("+g("saluran")+")"}]};
- if(CLOUD){try{const j=await api({action:"create",rec});D.push(j.rec);go("det",j.rec.id)}catch(e){alert("Gagal simpan ke cloud: "+e.message)}return}
- const d=new Date(),p=`ADU-${String(d.getFullYear()).slice(2)}${String(d.getMonth()+1).padStart(2,"0")}-`;
- rec.id=p+String(D.filter(a=>a.id.startsWith(p)).length+1).padStart(3,"0");
- D.push(rec);save();go("det",rec.id)}
-const get=id=>D.find(a=>a.id==id);
-function push(id,s,x){const a=get(id);if(s)a.s=s;a.log.push({t:now(),x});if(s=="tutup")a.tutup=now();save(a);render()}
-function vDet(){
- const a=get(cur);if(!a)return"";
- const i=ORD.indexOf(a.s);
- let act="";
- if(a.s=="baru")act=`<button class="btn" onclick="push('${a.id}','periksa','Pegawai mula pemeriksaan di lokasi')">Mula Pemeriksaan di Lokasi</button>`;
- if(a.s=="periksa")act=`<label>Dapatan pemeriksaan / troubleshooting</label><textarea id="dap"></textarea>
-  <b style="display:block;margin-top:12px">Boleh diselesaikan di lokasi?</b>
-  <label>YA — tindakan (baiki / konfigurasi / tukar kabel atau aksesori)</label><textarea id="tin"></textarea>
-  <button class="btn" onclick="ya('${a.id}')">YA — Selesai di lokasi</button>
-  <label>TIDAK — rujuk kepada</label><select id="rj"><option>Alat ganti</option><option>Vendor</option><option>Unit ICT</option><option>Unit Teknikal</option></select>
-  <button class="btn sec" onclick="tidak('${a.id}')">TIDAK — Tindakan susulan</button>`;
- if(a.s=="susulan")act=`<label>Catatan tindakan susulan</label><textarea id="cat"></textarea>
-  <button class="btn" onclick="sel('${a.id}')">Masalah selesai / peralatan boleh digunakan</button>`;
- if(a.s=="sahkan")act=`<p class="mu">Pensyarah / pelajar mengesahkan tindakan.</p>
-  <button class="btn" onclick="push('${a.id}','tutup','Pengadu mengesahkan masalah selesai. Aduan ditutup & rekod disimpan')">Pengadu Sahkan — Tutup Aduan</button>
-  <button class="btn bad" onclick="push('${a.id}','periksa','Pengadu tidak berpuas hati — pemeriksaan semula')">Belum Selesai</button>`;
- return `<button class="btn sec" onclick="go('list')">← Senarai</button>
- <div class="card"><div class="row"><b>${a.id}</b><span class="tag ${tagc(a.s)}">${ST[a.s]}</span></div>
- <div class="steps">${ORD.map((s,k)=>`<i class="${k<=i?'d':''}"></i>`).join("")}</div>
- <div><b>${esc(a.kat)}</b> — ${esc(a.masalah)}</div>
- <p class="mu">${esc(a.nama)} (${a.jenis}) • ${esc(a.lokasi)}<br>Saluran: ${esc(a.saluran)} • Peralatan: ${esc(a.alat||"-")}<br>${fmt(a.t)}</p></div>
- ${act?`<div class="card">${act}</div>`:""}
- <div class="card"><b>Rekod Tindakan</b>${a.log.map(l=>`<div class="log">${esc(l.x)}<div class="mu">${fmt(l.t)}</div></div>`).join("")}
- ${a.s=="tutup"?"":""}<button class="btn bad" onclick="del('${a.id}')" style="margin-top:14px">Padam</button></div>`}
-function ya(id){const d=$("dap").value.trim(),t=$("tin").value.trim();if(!t){alert("Isi tindakan yang dibuat.");return}
- push(id,"sahkan",`Pemeriksaan: ${d||"-"}. Diselesaikan di lokasi: ${t}. Diuji semula & berfungsi`)}
+ busy=true;$("sv").disabled=true;let ok=false,rec;
+ try{rec=norm({id:nextId(),t:now(),jenis:g("jenis"),nama:g("nama"),lokasi:g("lokasi"),saluran:g("saluran"),kat:g("kat"),alat:g("alat"),masalah:g("masalah"),s:"baru",log:[{t:now(),x:"Aduan diterima & direkod ("+g("saluran")+")"}]});
+  ok=await persist(()=>dbPut([rec]));if(ok)D.push(rec)}
+ finally{busy=false;const b=$("sv");if(b)b.disabled=false}
+ if(ok)go("det",rec.id)}
+
+/* ---------- butiran & aliran kerja ---------- */
+function vDet(){const a=get(cur);if(!a)return `<button class="btn sec" onclick="go('list')">← Senarai</button><p class="mu">Aduan tidak ditemui.</p>`;
+ const i=ORD.indexOf(a.s),id=esc(a.id);let act="";
+ if(a.s=="baru")act=`<button class="btn" onclick="push('${id}','periksa','Pegawai mula pemeriksaan di lokasi')">Mula Pemeriksaan di Lokasi</button>`;
+ if(a.s=="periksa")act=`<label for="dap">Dapatan pemeriksaan / troubleshooting</label><textarea id="dap"></textarea>
+<b style="display:block;margin-top:12px">Boleh diselesaikan di lokasi?</b>
+<label for="tin">YA — tindakan (baiki / konfigurasi / tukar kabel atau aksesori)</label><textarea id="tin"></textarea>
+<button class="btn" onclick="ya('${id}')">YA — Selesai di lokasi</button>
+<label for="rj">TIDAK — rujuk kepada</label><select id="rj"><option>Alat ganti</option><option>Vendor</option><option>Unit ICT</option><option>Unit Teknikal</option></select>
+<button class="btn sec" onclick="tidak('${id}')">TIDAK — Tindakan susulan</button>`;
+ if(a.s=="susulan")act=`<label for="cat">Catatan tindakan susulan</label><textarea id="cat"></textarea><button class="btn" onclick="sel('${id}')">Masalah selesai / peralatan boleh digunakan</button>`;
+ if(a.s=="sahkan")act=`<p class="mu">Pensyarah / pelajar / staf mengesahkan tindakan.</p><button class="btn" onclick="push('${id}','tutup','Pengadu mengesahkan masalah selesai. Aduan ditutup & rekod disimpan')">Pengadu Sahkan — Tutup Aduan</button><button class="btn bad" onclick="push('${id}','periksa','Pengadu tidak berpuas hati — pemeriksaan semula')">Belum Selesai</button>`;
+ return `<button class="btn sec" onclick="history.length>1?history.back():go('list')">← Senarai</button>
+<div class="card"><div class="row"><b>${id}</b><span class="tag ${tagc(a.s)}">${ST[a.s]}</span></div>
+<div class="steps">${ORD.map((s,k)=>`<i class="${k<=i?"d":""}"></i>`).join("")}</div>
+<div><b>${esc(a.kat)}</b> — ${esc(a.masalah)}</div>
+<p class="mu">${esc(a.nama)} (${esc(a.jenis)}) • ${esc(a.lokasi)}<br>Saluran: ${esc(a.saluran)} • Peralatan: ${esc(a.alat||"-")}<br>${fmt(a.t)}</p></div>
+${act?`<div class="card">${act}</div>`:""}
+<div class="card"><b>Rekod Tindakan</b>${a.log.map(l=>`<div class="log">${esc(l.x)}<div class="mu">${fmt(l.t)}</div></div>`).join("")}
+<button class="btn bad" onclick="del('${id}')" style="margin-top:14px">Padam</button></div>`}
+async function push(id,s,x){const i=D.findIndex(a=>a.id==id);if(i<0||busy)return;busy=true;
+ try{const b=JSON.parse(JSON.stringify(D[i]));if(s)b.s=s;b.log.push({t:now(),x});if(s=="tutup")b.tutup=now();
+  if(await persist(()=>dbPut([b])))D[i]=b}finally{busy=false}render()}
+function ya(id){const d=$("dap").value.trim(),t=$("tin").value.trim();if(!t){alert("Isi tindakan yang dibuat.");return}push(id,"sahkan",`Pemeriksaan: ${d||"-"}. Diselesaikan di lokasi: ${t}. Diuji semula & berfungsi`)}
 function tidak(id){const d=$("dap").value.trim();push(id,"susulan",`Pemeriksaan: ${d||"-"}. Tidak dapat diselesaikan di lokasi — dirujuk kepada ${$("rj").value}`)}
 function sel(id){const c=$("cat").value.trim();push(id,"sahkan","Tindakan susulan selesai: "+(c||"-")+". Peralatan boleh digunakan")}
-function del(id){if(confirm("Padam aduan "+id+"?")){D=D.filter(a=>a.id!=id);if(CLOUD)api({action:"delete",id}).catch(()=>alert("Gagal padam di cloud."));else save();go("list")}}
-function vStat(){
- const m=new Date().toISOString().slice(0,7),M=D.filter(a=>a.t.startsWith(m));
- const c=(L,f)=>L.filter(f).length,mx=Math.max(1,...KAT.map(k=>c(M,a=>a.kat==k)));
+async function del(id){if(busy||!confirm("Padam aduan "+id+"?"))return;busy=true;
+ try{if(await persist(()=>dbDel(id)))D=D.filter(a=>a.id!=id)}finally{busy=false}go("list")}
+
+/* ---------- statistik & laporan ---------- */
+const cnt=(L,f)=>L.filter(f).length;
+function vStat(){const m=ym(),M=D.filter(a=>ymOf(a.t)==m),mx=Math.max(1,...KAT.map(k=>cnt(M,a=>a.kat==k)));
  return `<div class="card"><b>Statistik Bulan Ini (${m})</b><div class="grid" style="margin-top:10px">
- <div class="stat"><b>${M.length}</b>Jumlah</div><div class="stat"><b>${c(M,a=>a.s=="tutup")}</b>Ditutup</div>
- <div class="stat"><b>${c(D,a=>a.s!="tutup")}</b>Belum tutup</div><div class="stat"><b>${c(M,a=>a.s=="susulan")}</b>Susulan</div></div></div>
- <div class="card"><b>Mengikut Kategori</b>${KAT.map(k=>{const n=c(M,a=>a.kat==k);return `<div style="margin-top:10px"><div class="row"><span>${k}</span><span>${n}</span></div><div class="bar" style="width:${n/mx*100}%"></div></div>`}).join("")}</div>
- <div class="card"><b>Eksport rekod (audit)</b><p class="mu">Salin semua rekod sebagai CSV untuk ditampal ke Excel.</p><button class="btn" onclick="csv()">Salin CSV</button></div>`}
-function csv(){
- const r=[["ID","Tarikh","Jenis","Nama","Lokasi","Kategori","Masalah","Status","Ditutup"]].concat(D.map(a=>[a.id,a.t,a.jenis,a.nama,a.lokasi,a.kat,a.masalah,ST[a.s],a.tutup||""]));
- const t=r.map(x=>x.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(",")).join("\n");
- try{navigator.clipboard.writeText(t).then(()=>alert("CSV disalin."),()=>prompt("Salin:",t))}catch(e){prompt("Salin:",t)}}
-let R={m:new Date().toISOString().slice(0,7),k:"",s:""};
+<div class="stat"><b>${M.length}</b>Jumlah</div><div class="stat"><b>${cnt(M,a=>a.s=="tutup")}</b>Ditutup</div>
+<div class="stat"><b>${cnt(D,a=>a.s!="tutup")}</b>Belum tutup</div><div class="stat"><b>${cnt(M,a=>a.log.some(l=>l.x.includes("dirujuk")))}</b>Susulan</div></div></div>
+<div class="card"><b>Mengikut Kategori</b>${KAT.map(k=>{const n=cnt(M,a=>a.kat==k);return `<div style="margin-top:10px"><div class="row"><span>${k}</span><span>${n}</span></div><div class="bar" style="width:${n/mx*100}%"></div></div>`}).join("")}</div>`}
+let R={m:ym(),k:"",s:""};
 const hari=ms=>{const h=ms/36e5;return h<24?h.toFixed(1)+" jam":(h/24).toFixed(1)+" hari"};
-function repL(){return D.filter(a=>(!R.m||a.t.startsWith(R.m))&&(!R.k||a.kat==R.k)&&(!R.s||a.s==R.s)).sort((a,b)=>a.t.localeCompare(b.t))}
-function vRep(){
- const L=repL(),T=L.filter(a=>a.tutup),avg=T.length?hari(T.reduce((x,a)=>x+(new Date(a.tutup)-new Date(a.t)),0)/T.length):"-";
- const logo=document.querySelector(".logo img").src;
+const repL=()=>D.filter(a=>(!R.m||ymOf(a.t)==R.m)&&(!R.k||a.kat==R.k)&&(!R.s||a.s==R.s)).sort((a,b)=>a.t<b.t?-1:a.t>b.t?1:0);
+function vRep(){const L=repL(),T=L.filter(a=>a.tutup),avg=T.length?hari(T.reduce((x,a)=>x+(new Date(a.tutup)-new Date(a.t)),0)/T.length):"-";
+ const lg=document.querySelector(".logo img"),logo=lg?lg.src:"",lb=lsGet("aduan_lastbackup");
  return `<div class="card noprint"><b>Jana Laporan</b>
- <label>Bulan (kosongkan untuk semua tempoh)</label><input type="month" value="${R.m}" onchange="R.m=this.value;render()">
- <label>Kategori</label><select onchange="R.k=this.value;render()"><option value="">Semua</option>${KAT.map(k=>`<option ${R.k==k?'selected':''}>${k}</option>`).join("")}</select>
- <label>Status</label><select onchange="R.s=this.value;render()"><option value="">Semua</option>${ORD.map(x=>`<option value="${x}" ${R.s==x?'selected':''}>${ST[x]}</option>`).join("")}</select>
- <button class="btn" onclick="print()">🖨️ Cetak / Simpan PDF</button>
- <button class="btn sec" onclick="dlCsv()">⬇️ Muat turun CSV</button></div>
- <div id="lap"><div style="text-align:center"><img src="${logo}" style="height:44px"></div>
- <h2>LAPORAN ADUAN SOKONGAN ICT DAN TEKNIKAL</h2>
- <p>Tempoh: ${R.m||"Semua tempoh"}${R.k?" • "+R.k:""}${R.s?" • "+ST[R.s]:""}</p><p>Dijana: ${fmt(now())}</p>
- <table><tr><th>Jumlah aduan</th><th>Ditutup</th><th>Belum tutup</th><th>Tindakan susulan</th><th>Purata masa selesai</th></tr>
- <tr><td>${L.length}</td><td>${T.length}</td><td>${L.length-T.length}</td><td>${L.filter(a=>a.log.some(l=>l.x.includes("dirujuk")))?.length}</td><td>${avg}</td></tr></table>
- <table><tr><th>Kategori</th><th>Bil.</th></tr>${KAT.map(k=>`<tr><td>${k}</td><td>${L.filter(a=>a.kat==k).length}</td></tr>`).join("")}</table>
- <div class="tw"><table><tr><th>#</th><th>ID</th><th>Tarikh</th><th>Pengadu</th><th>Lokasi</th><th>Kategori</th><th>Masalah</th><th>Status</th><th>Ditutup</th></tr>
- ${L.map((a,i)=>`<tr><td>${i+1}</td><td>${a.id}</td><td>${fmt(a.t)}</td><td>${esc(a.nama)} (${a.jenis})</td><td>${esc(a.lokasi)}</td><td>${esc(a.kat)}</td><td>${esc(a.masalah)}</td><td>${ST[a.s]}</td><td>${a.tutup?fmt(a.tutup):"-"}</td></tr>`).join("")||'<tr><td colspan="9">Tiada rekod.</td></tr>'}</table></div>
- <div class="sg"><div>Disediakan oleh</div><div>Disemak oleh</div></div></div>
- <div class="card noprint"><b>Sandaran data</b><p class="mu">Simpan salinan rekod pada peranti, dan pulihkan jika tukar peranti atau data terpadam.</p>
- <button class="btn sec" onclick="dlJson()">💾 Sandar (JSON)</button>
- <label>Pulih daripada fail sandaran</label><input type="file" accept=".json,application/json" onchange="pulih(this.files[0])"></div>`}
-function dl(name,text,type){
- try{const u=URL.createObjectURL(new Blob([text],{type})),a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1500)}
- catch(e){try{navigator.clipboard.writeText(text);alert("Muat turun tidak disokong di sini. Kandungan disalin ke papan klip.")}catch(x){prompt("Salin:",text)}}}
-function dlCsv(){
- const r=[["ID","Tarikh","Jenis","Nama","Lokasi","Saluran","Kategori","Peralatan","Masalah","Status","Ditutup"]].concat(repL().map(a=>[a.id,a.t,a.jenis,a.nama,a.lokasi,a.saluran,a.kat,a.alat||"",a.masalah,ST[a.s],a.tutup||""]));
- dl("laporan-aduan-"+(R.m||"semua")+".csv","\ufeff"+r.map(x=>x.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(",")).join("\r\n"),"text/csv;charset=utf-8")}
-function dlJson(){dl("sandaran-aduan-"+now().slice(0,10)+".json",JSON.stringify(D),"application/json")}
-function pulih(f){if(!f)return;const r=new FileReader();r.onload=()=>{try{const A=JSON.parse(r.result);if(!Array.isArray(A))throw 0;let n=0;A.forEach(a=>{if(a&&a.id&&!get(a.id)){D.push(a);n++}});if(CLOUD)api({action:"upsertMany",recs:A}).catch(()=>alert("Gagal pulih ke cloud."));else save();alert(n+" rekod dipulihkan.");render()}catch(e){alert("Fail sandaran tidak sah.")}};r.readAsText(f)}
-render();
-if(CLOUD){setSt("☁️ Memuatkan…");cloudLoad().then(render);
- setInterval(()=>{const t=document.activeElement&&document.activeElement.tagName;if(view=="new"||view=="det"||/INPUT|SELECT|TEXTAREA/.test(t||""))return;cloudLoad().then(render)},30000)}
+<label for="rm">Bulan (kosongkan untuk semua tempoh)</label><input id="rm" type="month" value="${esc(R.m)}" onchange="R.m=this.value;render()">
+<label for="rk">Kategori</label><select id="rk" onchange="R.k=this.value;render()"><option value="">Semua</option>${KAT.map(k=>`<option ${R.k==k?"selected":""}>${k}</option>`).join("")}</select>
+<label for="rs">Status</label><select id="rs" onchange="R.s=this.value;render()"><option value="">Semua</option>${ORD.map(x=>`<option value="${x}" ${R.s==x?"selected":""}>${ST[x]}</option>`).join("")}</select>
+<button class="btn" onclick="print()">🖨️ Cetak / Simpan PDF</button><button class="btn sec" onclick="dlCsv()">⬇️ Muat turun CSV</button></div>
+<div id="lap"><div style="text-align:center"><img src="${logo}" style="height:44px" alt=""></div><h2>LAPORAN ADUAN SOKONGAN ICT DAN TEKNIKAL</h2>
+<p>Tempoh: ${esc(R.m||"Semua tempoh")}${R.k?" • "+esc(R.k):""}${R.s?" • "+ST[R.s]:""}</p><p>Dijana: ${fmt(now())}</p>
+<table><tr><th>Jumlah aduan</th><th>Ditutup</th><th>Belum tutup</th><th>Tindakan susulan</th><th>Purata masa selesai</th></tr>
+<tr><td>${L.length}</td><td>${T.length}</td><td>${L.length-T.length}</td><td>${cnt(L,a=>a.log.some(l=>l.x.includes("dirujuk")))}</td><td>${avg}</td></tr></table>
+<table><tr><th>Kategori</th><th>Bil.</th></tr>${KAT.map(k=>`<tr><td>${k}</td><td>${cnt(L,a=>a.kat==k)}</td></tr>`).join("")}</table>
+<div class="tw"><table><tr><th>#</th><th>ID</th><th>Tarikh</th><th>Pengadu</th><th>Lokasi</th><th>Kategori</th><th>Masalah</th><th>Status</th><th>Ditutup</th></tr>
+${L.map((a,i)=>`<tr><td>${i+1}</td><td>${esc(a.id)}</td><td>${fmt(a.t)}</td><td>${esc(a.nama)} (${esc(a.jenis)})</td><td>${esc(a.lokasi)}</td><td>${esc(a.kat)}</td><td>${esc(a.masalah)}</td><td>${ST[a.s]}</td><td>${a.tutup?fmt(a.tutup):"-"}</td></tr>`).join("")||'<tr><td colspan="9">Tiada rekod.</td></tr>'}</table></div>
+<div class="sg"><div>Disediakan oleh<br><b>ABDUL RAHMAN KAMARUN</b><br>Penolong Pegawai Teknologi Maklumat<br>No. Pekerja: 187897<br>Unit: ICT FPHP</div><div>Disemak oleh</div></div></div>
+<div class="card noprint"><b>Sandaran data</b><p class="mu">Sandaran terakhir: ${lb?fmt(lb):"belum pernah"}. Simpan salinan rekod pada peranti dan pulihkan jika tukar peranti atau data terpadam.</p>
+<button class="btn sec" onclick="dlJson()">💾 Sandar (JSON)</button>
+<label for="pf">Pulih daripada fail sandaran</label><input id="pf" type="file" accept=".json,application/json" onchange="pulih(this.files[0])"></div>`}
+function dl(name,text,type){try{const u=URL.createObjectURL(new Blob([text],{type})),a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1500);return true}
+ catch(e){try{navigator.clipboard.writeText(text);alert("Muat turun tidak disokong di sini. Kandungan disalin ke papan klip.")}catch(x){prompt("Salin:",text)}return false}}
+const cell=v=>{v=String(v==null?"":v);if(/^[=+\-@\t\r]/.test(v))v="'"+v;return '"'+v.replace(/"/g,'""')+'"'};
+function dlCsv(){const r=[["ID","Tarikh","Jenis","Nama","Lokasi","Saluran","Kategori","Peralatan","Masalah","Status","Ditutup"]].concat(repL().map(a=>[a.id,a.t,a.jenis,a.nama,a.lokasi,a.saluran,a.kat,a.alat,a.masalah,ST[a.s],a.tutup||""]));
+ dl("laporan-aduan-"+(R.m||"semua")+".csv","\ufeff"+r.map(x=>x.map(cell).join(",")).join("\r\n"),"text/csv;charset=utf-8")}
+function dlJson(){if(dl("sandaran-aduan-"+now().slice(0,10)+".json",JSON.stringify(D),"application/json")){lsSet("aduan_lastbackup",now());render()}}
+function pulih(f){if(!f)return;const r=new FileReader();r.onerror=()=>alert("Fail tidak dapat dibaca.");
+ r.onload=async()=>{let A;try{A=JSON.parse(r.result)}catch(e){alert("Fail sandaran tidak sah.");return}
+  if(!Array.isArray(A)){alert("Fail sandaran tidak sah.");return}
+  const have=new Set(D.map(a=>a.id)),add=[];let bad=0;
+  A.forEach(x=>{const n=norm(x);if(!n)bad++;else if(!have.has(n.id)){have.add(n.id);add.push(n)}});
+  if(add.length&&!(await persist(()=>dbPut(add))))return;
+  D=D.concat(add);alert(add.length+" rekod dipulihkan"+(bad?", "+bad+" rekod tidak sah diabaikan":"")+".");render()};
+ r.readAsText(f)}
+
+/* ---------- mula ---------- */
+(async()=>{render();setSt("Memuatkan…");
+ try{idb=await openDB()}catch(e){mode="ls"}
+ try{D=(await dbAll()).map(norm).filter(Boolean);
+  if(mode=="idb"&&!lsGet("aduan_migrated")){const have=new Set(D.map(a=>a.id)),old=lsRead().map(norm).filter(a=>a&&!have.has(a.id));
+   if(old.length){await dbPut(old);D=D.concat(old)}lsSet("aduan_migrated","1")}
+  setSt(mode=="idb"?"✓ Storan pantas (IndexedDB)":"Storan asas (localStorage)")}
+ catch(e){setSt("⚠ Gagal membaca data",true)}
+ render();try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}})();
 </script>
 </body>
 </html>
